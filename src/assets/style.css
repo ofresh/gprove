@@ -1,0 +1,229 @@
+/* Основні стилі для сторінки */
+body {
+  margin: 0;
+  padding: 0;
+  height: 100vh;
+  display: flex;
+  background-image: url('/arcade-background.jpeg');
+  background-size: cover;
+  background-position: center;
+  font-family: 'Courier New', Courier, monospace;
+  overflow: hidden;
+}
+
+/* Контейнер для вмісту */
+.container {
+  position: relative;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  width: 100%;
+  height: 100vh;
+  box-sizing: border-box;
+}
+
+/* Початковий вміст (екран із кнопкою PLAY) */
+.initial-content {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
+/* Контейнер для гри */
+#game-container {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  width: 100%;
+  max-width: 600px;
+  height: 100%;
+  max-height: 800px;
+  aspect-ratio: 3/4;
+  display: none;
+  margin: auto;
+  z-index: 150; /* Вище стрічок */
+  box-sizing: border-box;
+}
+
+/* Кнопка PLAY */
+.play-button {
+  text-align: center;
+  text-decoration: none;
+  color: #ff00ff;
+  font-size: 32px;
+  font-weight: bold;
+  padding: 20px 40px;
+  border: 3px solid #ff00ff;
+  background: #1a1a1a;
+  box-shadow: 0 0 10px #ff00ff, 0 0 20px #ff00ff;
+  animation: neon-flicker 1.5s infinite;
+  transition: transform 0.1s ease;
+  cursor: pointer;
+}
+
+.play-button:hover {
+  transform: scale(1.05);
+  box-shadow: 0 0 20px #ff00ff, 0 0 30px #ff00ff;
+}
+
+/* Загальні стилі для кнопок (CLICK, GPROVE) */
+.button {
+  text-align: center;
+  text-decoration: none;
+  color: #ff00ff;
+  font-size: 24px;
+  font-weight: bold;
+  padding: 10px 20px;
+  border: 3px solid #ff00ff;
+  background: #1a1a1a;
+  box-shadow: 0 0 10px #ff00ff, 0 0 20px #ff00ff;
+  animation: neon-flicker 1.5s infinite;
+  transition: transform 0.1s ease;
+  display: inline-block;
+}
+
+.button:hover {
+  transform: scale(1.05);
+  box-shadow: 0 0 20px #ff00ff, 0 0 30px #ff00ff;
+}
+
+/* Текст праворуч (IF YOU ARE 0xCRASHOUT) */
+.right-text {
+  position: absolute;
+  right: 50px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: #ff00ff;
+  font-size: 28px;
+  font-weight: bold;
+  text-shadow: 0 0 10px #ff00ff;
+  line-height: 1.5;
+  text-align: center;
+}
+
+/* Кнопка зліва (GPROVE) */
+.left-button {
+  position: absolute;
+  left: 50px;
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+/* Виправлення для hover ефекту кнопки GPROVE */
+.left-button:hover {
+  transform: translateY(-50%) scale(1.05);
+  box-shadow: 0 0 20px #ff00ff, 0 0 30px #ff00ff;
+}
+
+/* Кнопка закриття гри */
+.close-button {
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  color: #ff00ff;
+  font-size: 24px;
+  font-weight: bold;
+  cursor: pointer;
+  text-shadow: 0 0 10px #ff00ff;
+  z-index: 160; /* Вище гри */
+  background: #1a1a1a;
+  border: 2px solid #ff00ff;
+  border-radius: 50%;
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 0 10px #ff00ff;
+  transition: transform 0.2s ease;
+}
+
+.close-button:hover {
+  transform: translateX(-50%) scale(1.1);
+  box-shadow: 0 0 15px #ff00ff;
+}
+
+/* Кнопка Mute */
+.mute-button {
+  position: absolute;
+  top: 85px;
+  right: 10px;
+  color: #ff00ff;
+  font-size: 16px;
+  font-weight: bold;
+  text-transform: uppercase;
+  padding: 8px 16px;
+  border: 2px solid #ff00ff;
+  background: #1a1a1a;
+  box-shadow: 0 0 10px #ff00ff, 0 0 20px #ff00ff;
+  animation: neon-flicker 1.5s infinite;
+  cursor: pointer;
+  z-index: 200; /* Вище гри та стрічок */
+  transition: transform 0.2s ease;
+  display: none; /* Прихована за замовчуванням */
+}
+
+.mute-button:hover {
+  transform: scale(1.05);
+  box-shadow: 0 0 15px #ff00ff, 0 0 25px #ff00ff;
+}
+
+/* Смуги з бігаючою стрічкою */
+.ticker {
+  width: 100%;
+  height: 2cm;
+  background: #000;
+  overflow: hidden;
+  position: fixed;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+}
+
+.top-ticker {
+  top: 0;
+}
+
+.bottom-ticker {
+  bottom: 0;
+}
+
+/* Текст бігаючої стрічки */
+.ticker-text {
+  display: inline-block;
+  white-space: nowrap;
+  color: #ff00ff;
+  font-family: 'Courier New', Courier, monospace;
+  font-size: 20px;
+  font-weight: bold;
+  text-shadow: 0 0 10px #ff00ff;
+  animation: ticker-scroll 30s linear infinite;
+}
+
+/* Анімація бігаючої стрічки */
+@keyframes ticker-scroll {
+  0% {
+    transform: translateX(100%);
+  }
+  100% {
+    transform: translateX(-100%);
+  }
+}
+
+/* Анімація неонового мерехтіння */
+@keyframes neon-flicker {
+  0%, 19%, 21%, 23%, 25%, 54%, 56%, 100% {
+    text-shadow: 0 0 10px #ff00ff, 0 0 20px #ff00ff;
+    box-shadow: 0 0 10px #ff00ff, 0 0 20px #ff00ff;
+  }
+  20%, 24%, 55% {
+    text-shadow: none;
+    box-shadow: none;
+  }
+}
