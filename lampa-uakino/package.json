@@ -1,0 +1,16 @@
+{
+  "name": "lampa-uakino",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Парсер торентів uakino.best (Jackett-сумісний) і плагін для Lampa",
+  "type": "commonjs",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "crawl": "node server.js crawl",
+    "test": "node test/test.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
