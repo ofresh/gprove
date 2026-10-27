@@ -48,6 +48,17 @@ const torrents = {
   '703634': makeTorrent('High.Potential.S01.720p', [2500000]),
 };
 
+function playlistHtml(base) {
+  return '<div class="playlists-player"><div class="playlists-lists"><div class="playlists-items"><ul>' +
+    '<li data-id="0_0" class="active">ТакТребаПродакшн</li><li data-id="0_1">DniproFilm</li></ul></div></div>' +
+    '<div class="playlists-videos"><div class="playlists-items"><ul>' +
+    '<li data-file="' + base + '/vod/1001" data-id="0_0" data-voice="ТакТребаПродакшн">1 серія</li>' +
+    '<li data-file="' + base + '/vod/1002" data-id="0_0" data-voice="ТакТребаПродакшн">2 серія</li>' +
+    '<li data-file="' + base + '/vod/2001" data-id="0_1" data-voice="DniproFilm">1 серія</li>' +
+    '<li data-file="https://www.youtube.com/embed/t" data-id="0_1" data-voice="Трейлер">Трейлер</li>' +
+    '</ul></div></div></div>';
+}
+
 function startUpstream() {
   const requests = [];
   const server = http.createServer((req, res) => {
@@ -59,7 +70,24 @@ function startUpstream() {
       return res.end(u.searchParams.get('story').indexOf('потенціал') >= 0 || u.searchParams.get('story') === 'High Potential' ? read('search.html') : '<html></html>');
     }
     if (p === '/seriesss/drama_series/25998-vysokyy-potencial-1-sezon.html') return res.end(read('page.html'));
-    if (p === '/seriesss/drama_series/27001-vysokyy-potencial-2-sezon.html') return res.end('<h1>Високий потенціал (Сезон 2)</h1><p>Торентів немає</p>');
+    if (p === '/seriesss/drama_series/27001-vysokyy-potencial-2-sezon.html') return res.end('<h1>Високий потенціал (Сезон 2)</h1><p>Торентів немає</p><iframe id="pre" src="' + base + '/serial/9" allowfullscreen></iframe><iframe src="https://www.youtube.com/embed/x"></iframe>');
+    if (p === '/engine/ajax/playlists.php') {
+      if (req.headers['x-requested-with'] !== 'XMLHttpRequest' || u.searchParams.get('news_id') !== '25998' || u.searchParams.get('xfield') !== 'playlist') return res.end(JSON.stringify({ success: false }));
+      res.setHeader('Content-Type', 'application/json');
+      return res.end(JSON.stringify({ success: true, response: playlistHtml(base) }));
+    }
+    if (p === '/vod/1001' || p === '/vod/1002' || p === '/vod/2001') {
+      if (!/25998/.test(req.headers.referer || '')) { res.statusCode = 403; return res.end('bad referer'); }
+      const id = p.split('/').pop();
+      return res.end('<script>var player = new Playerjs({id:"player", file:"[480p]https://cdn.example/' + id + '/480.m3u8,[1080p]https://cdn.example/' + id + '/1080.m3u8", subtitle:"[Українські]https://cdn.example/' + id + '.vtt", poster:"x.jpg"});</script>');
+    }
+    if (p === '/serial/9') {
+      const folders = [{ title: 'Сезон 2', folder: [
+        { title: 'Серія 1', file: 'https://cdn.example/s2e1/index.m3u8', id: '1' },
+        { title: 'Серія 2', file: 'https://cdn.example/s2e2/index.m3u8', id: '2' },
+      ] }];
+      return res.end("<script>new Playerjs({id:'p', file:'" + JSON.stringify(folders).replace(/\//g, '\\/') + "'});</script>");
+    }
     if (p === '/filmy/genre_comedy/11111-insha-komediia.html') return res.end('<h1>Зовсім інша комедія</h1><a href="/torrent/1/Інша.torrent">t</a>');
     if (p === '/sitemap.xml') return res.end('<sitemapindex><sitemap><loc>' + base + '/sitemap-news.xml</loc></sitemap></sitemapindex>');
     if (p === '/sitemap-news.xml') return res.end('<urlset><url><loc>' + base + '/seriesss/drama_series/25998-vysokyy-potencial-1-sezon.html</loc></url><url><loc>' + base + '/filmy/genre_comedy/11111-insha-komediia.html</loc></url></urlset>');
@@ -250,7 +278,7 @@ test('crawl: sitemap → індекс усіх торентів, потім по
 
 // ---------------- plugin (Playwright, якщо доступний) ----------------
 
-test('плагін Lampa: кнопка, пошук, вибір торента → Lampa.Torrent.start', async () => {
+test('плагін Lampa: кнопки, торенти → Lampa.Torrent.start, онлайн → Lampa.Player', async () => {
   let chromium;
   try { ({ chromium } = require('playwright')); } catch (e) { console.log('    (пропущено: немає playwright)'); return; }
 
@@ -270,10 +298,10 @@ test('плагін Lampa: кнопка, пошук, вибір торента �
     await page.addScriptTag({ url: base + '/uakino.js' });
 
     await page.evaluate(() => window.__fireFull({ title: 'Високий потенціал', original_name: 'High Potential', name: 'Високий потенціал', first_air_date: '2024-09-17' }));
-    const btn = await page.$$eval('.view--uakino', (els) => els.map((e) => e.previousElementSibling.className));
-    assert.deepStrictEqual(btn, ['full-start__button selector view--torrent']);
+    const btns = await page.$$eval('.full-start-new__buttons > *', (els) => els.map((e) => e.textContent));
+    assert.deepStrictEqual(btns, ['UAKino', 'Торренти', 'UAKino торенти']);
 
-    await page.evaluate(() => window.__enter('.view--uakino'));
+    await page.evaluate(() => window.__enter('.view--uakino-torrent'));
     await page.waitForFunction(() => window.__select, null, { timeout: 15000 });
     const sel = await page.evaluate(() => ({ title: window.__select.title, items: window.__select.items.map((i) => [i.title, i.subtitle]) }));
     assert.strictEqual(sel.items.length, 3);
@@ -286,11 +314,122 @@ test('плагін Lampa: кнопка, пошук, вибір торента �
     assert.strictEqual(started.movie.original_name, 'High Potential');
     assert.deepStrictEqual(errors, []);
 
+    // ---- онлайн ----
+    await page.evaluate(() => window.__enter('.view--uakino-online'));
+    await page.waitForFunction(() => document.querySelectorAll('.uakino-online__item').length === 2, null, { timeout: 15000 });
+    const list = await page.$$eval('.uakino-online__item', (els) => els.map((e) => e.querySelector('.uakino-online__title').textContent + ' | ' + e.querySelector('.uakino-online__info').textContent));
+    assert.deepStrictEqual(list, ['1 серія | Сезон 1 • ТакТребаПродакшн', '2 серія | Сезон 1 • ТакТребаПродакшн']);
+    const filters = await page.$$eval('.uakino-online__filter', (els) => els.map((e) => e.textContent));
+    assert.deepStrictEqual(filters, ['Сторінка: Сезон 1', 'Озвучка: ТакТребаПродакшн']);
+    assert.strictEqual(await page.evaluate(() => window.__controller), 'content');
+
+    // Вибір озвучки
+    await page.evaluate(() => { window.__select = null; window.__enter('.uakino-online__filter:nth-child(2)'); });
+    await page.evaluate(() => window.__select.onSelect(window.__select.items[1]));
+    assert.deepStrictEqual(await page.$$eval('.uakino-online__item .uakino-online__title', (els) => els.map((e) => e.textContent)), ['1 серія']);
+    await page.evaluate(() => { window.__enter('.uakino-online__filter:nth-child(2)'); window.__select.onSelect(window.__select.items[0]); });
+
+    // Запуск другої серії: пряме посилання, якість, субтитри, плейлист з лінивим першим пунктом.
+    await page.evaluate(() => window.__enter('.uakino-online__item:nth-of-type(3)'));
+    await page.waitForFunction(() => window.__play, null, { timeout: 15000 });
+    const played = await page.evaluate(() => ({ play: window.__play, types: window.__playlist.map((p) => typeof p.url) }));
+    assert.strictEqual(played.play.url, 'https://cdn.example/1002/1080.m3u8');
+    assert.strictEqual(played.play.quality['480p'], 'https://cdn.example/1002/480.m3u8');
+    assert.strictEqual(played.play.subtitles[0].label, 'Українські');
+    assert.strictEqual(played.play.timeline.hash, 'h:12High Potential');
+    assert.deepStrictEqual(played.types, ['function', 'string']);
+    const lazy = await page.evaluate(() => new Promise((resolve) => {
+      const cell = window.__playlist[0];
+      cell.url(() => resolve({ url: cell.url, q: cell.quality }));
+    }));
+    assert.strictEqual(lazy.url, 'https://cdn.example/1001/1080.m3u8');
+
+    // Перемикання на сторінку другого сезону (плеєр із folders).
+    await page.evaluate(() => { window.__enter('.uakino-online__filter:nth-child(1)'); window.__select.onSelect(window.__select.items[1]); });
+    await page.waitForFunction(() => document.querySelector('.uakino-online__item .uakino-online__info') && /Сезон 2/.test(document.querySelector('.uakino-online__item .uakino-online__info').textContent), null, { timeout: 15000 });
+    assert.deepStrictEqual(await page.$$eval('.uakino-online__item .uakino-online__title', (els) => els.map((e) => e.textContent)), ['Серія 1', 'Серія 2']);
+    assert.deepStrictEqual(errors, []);
+
     // Settings зареєстровано
     const settings = await page.evaluate(() => window.__settings);
     assert.deepStrictEqual(settings, ['uakino', 'uakino_server', 'uakino_apikey']);
   } finally {
     await browser.close();
+    srv.close();
+    up.server.close();
+  }
+});
+
+// ---------------- online ----------------
+
+test('online: розбір плейлиста, Playerjs, якості, субтитри', () => {
+  const online = require('../lib/online');
+  const eps = online.parsePlaylist(playlistHtml('https://uakino.best'), 'https://uakino.best');
+  assert.deepStrictEqual(eps.map((e) => e.group + '|' + e.title), ['ТакТребаПродакшн|1 серія', 'ТакТребаПродакшн|2 серія', 'DniproFilm|1 серія', 'DniproFilm / Трейлер|Трейлер']);
+  // Багаторівневі списки (сезон → озвучка).
+  const multi = online.parsePlaylist('<li data-id="0">Сезон 1</li><li data-id="0_0">Voice A</li><li data-file="//ashdi.vip/vod/1" data-id="0_0">Серія 3</li>', 'https://uakino.best');
+  assert.deepStrictEqual(multi, [{ group: 'Сезон 1 / Voice A', title: 'Серія 3', file: 'https://ashdi.vip/vod/1' }]);
+
+  const single = online.parsePlayerjs('new Playerjs({id:"p",file:"https://cdn/x/index.m3u8"})');
+  assert.deepStrictEqual(online.toStream(single.file, single.subtitle), { url: 'https://cdn/x/index.m3u8', quality: null, subtitles: [] });
+  const q = online.parsePlayerjs('Playerjs({file:"[720p]//cdn/720.m3u8,[1080p]//cdn/1080.m3u8",subtitle:"[UA]//cdn/ua.vtt,[EN]//cdn/en.vtt"})');
+  assert.deepStrictEqual(online.toStream(q.file, q.subtitle), {
+    url: 'https://cdn/1080.m3u8',
+    quality: { '720p': 'https://cdn/720.m3u8', '1080p': 'https://cdn/1080.m3u8' },
+    subtitles: [{ label: 'UA', url: 'https://cdn/ua.vtt' }, { label: 'EN', url: 'https://cdn/en.vtt' }],
+  });
+  const f = online.parsePlayerjs("Playerjs({file:'[{\"title\":\"Озвучка\",\"folder\":[{\"title\":\"Сезон 1\",\"folder\":[{\"title\":\"Серія 5\",\"file\":\"https:\\/\\/cdn\\/5.m3u8\"}]}]}]'})");
+  assert.deepStrictEqual(f.folders, [{ path: ['Озвучка', 'Сезон 1'], title: 'Серія 5', file: 'https://cdn/5.m3u8', subtitle: '' }]);
+  assert.strictEqual(online.parsePlayerjs('<html>no player</html>'), null);
+  assert.strictEqual(online.episodeOf('12 серія'), 12);
+  assert.strictEqual(online.episodeOf('Серія 7'), 7);
+  assert.strictEqual(online.seasonOf('Високий потенціал (Сезон 2)'), 2);
+});
+
+async function checkOnline(call, base, upBase) {
+  const search = await call('/online/search?title=' + encodeURIComponent('Високий потенціал') + '&original=' + encodeURIComponent('High Potential'));
+  assert.strictEqual(search.status, 200);
+  const pages = search.body.pages;
+  assert.deepStrictEqual(pages.map((p) => p.season), [1, 2]);
+  assert.ok(!pages.some((p) => /комедія/.test(p.title)));
+
+  const s1 = await call('/online/page?url=' + encodeURIComponent(pages[0].url));
+  assert.strictEqual(s1.status, 200, JSON.stringify(s1.body));
+  assert.strictEqual(s1.body.season, 1);
+  assert.deepStrictEqual(s1.body.items.map((i) => [i.group, i.episode, i.url]), [
+    ['ТакТребаПродакшн', 1, upBase + '/vod/1001'],
+    ['ТакТребаПродакшн', 2, upBase + '/vod/1002'],
+    ['DniproFilm', 1, upBase + '/vod/2001'],
+  ]);
+
+  const st = await call('/online/stream?url=' + encodeURIComponent(upBase + '/vod/1002') + '&referer=' + encodeURIComponent(pages[0].url));
+  assert.strictEqual(st.status, 200, JSON.stringify(st.body));
+  assert.deepStrictEqual(st.body, {
+    url: 'https://cdn.example/1002/1080.m3u8',
+    quality: { '480p': 'https://cdn.example/1002/480.m3u8', '1080p': 'https://cdn.example/1002/1080.m3u8' },
+    subtitles: [{ label: 'Українські', url: 'https://cdn.example/1002.vtt' }],
+  });
+
+  const s2 = await call('/online/page?url=' + encodeURIComponent(pages[1].url));
+  assert.strictEqual(s2.status, 200, JSON.stringify(s2.body));
+  assert.deepStrictEqual(s2.body.items.map((i) => [i.season, i.episode, i.stream.url]), [
+    [2, 1, 'https://cdn.example/s2e1/index.m3u8'],
+    [2, 2, 'https://cdn.example/s2e2/index.m3u8'],
+  ]);
+
+  assert.strictEqual((await call('/online/stream?url=' + encodeURIComponent('http://169.254.169.254/latest'))).status, 403);
+  assert.strictEqual((await call('/online/page?url=' + encodeURIComponent('https://evil.example/1-a.html'))).status, 403);
+}
+
+test('online: сервер /online/search, /online/page, /online/stream', async () => {
+  const up = await startUpstream();
+  const { createServer } = require('../server');
+  const { UAKino } = require('../lib/uakino');
+  const srv = createServer(new UAKino({ host: up.base, scrapePeers: false, indexFile: '' }));
+  const base = await listen(srv);
+  try {
+    await checkOnline((p) => getJson(base + p), base, up.base);
+  } finally {
     srv.close();
     up.server.close();
   }
@@ -328,6 +467,11 @@ test('worker: зібраний файл актуальний і віддає т�
     assert.ok(js.indexOf('var BUILT_IN_SERVER = "https://uakino.example.workers.dev"') >= 0);
 
     assert.deepStrictEqual((await (await call('/api/v2.0/indexers/all/results?Query=zzzz')).json()).Results, []);
+    await checkOnline(async (p) => {
+      const r = await call(p);
+      return { status: r.status, body: await r.json() };
+    }, 'https://uakino.example.workers.dev', up.base);
+
     const keyed = await worker.fetch(new Request('https://w.dev/api/v2.0/indexers/all/results?Query=x'), { ...env, UAKINO_APIKEY: 'k' }, {});
     assert.strictEqual(keyed.status, 401);
   } finally {

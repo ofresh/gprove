@@ -1,10 +1,10 @@
 // Згенеровано worker/build.js з lampa-uakino — не редагуйте вручну.
 // UAKino → Lampa: Jackett-сумісний парсер торентів uakino.best для Cloudflare Workers.
 
-const __PLUGIN_SOURCE__ = "/*\n * UAKino торенти — плагін для Lampa.\n * Додає кнопку «UAKino» на картку фільму/серіалу: шукає торенти uakino.best\n * через парсер (server.js з цього репозиторію) і запускає їх у TorrServer.\n *\n * Найпростіше встановлення: у Lampa → Налаштування → Розширення → Додати плагін\n * вкажіть http://<IP-парсера>:9118/uakino.js — адреса парсера підставиться сама.\n */\n(function () {\n  'use strict';\n\n  if (window.uakino_torrents_plugin) return;\n  window.uakino_torrents_plugin = true;\n\n  // Сервер замінює цей рядок своєю адресою, коли віддає плагін за /uakino.js\n  var BUILT_IN_SERVER = '__UAKINO_SERVER__';\n  if (BUILT_IN_SERVER.indexOf('__') === 0) BUILT_IN_SERVER = '';\n\n  var ICON = '<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" width=\"24\" height=\"24\"><path fill=\"currentColor\" d=\"M12 2 3 6v6c0 5 3.8 9.7 9 10 5.2-.3 9-5 9-10V6l-9-4Zm0 4.2 2 4.3H10l2-4.3ZM8 12h8l-4 6-4-6Z\"/></svg>';\n\n  function serverUrl() {\n    var s = Lampa.Storage.get('uakino_server', '') || BUILT_IN_SERVER;\n    s = String(s).trim().replace(/\\/+$/, '');\n    if (s && !/^https?:\\/\\//i.test(s)) s = 'http://' + s;\n    return s;\n  }\n\n  function enc(v) {\n    return encodeURIComponent(v || '');\n  }\n\n  function searchUrl(movie) {\n    var title = movie.title || movie.name || '';\n    var original = movie.original_title || movie.original_name || '';\n    var date = movie.release_date || movie.first_air_date || '';\n    var key = Lampa.Storage.get('uakino_apikey', '');\n    return serverUrl() + '/api/v2.0/indexers/uakino/results' +\n      '?apikey=' + enc(key) +\n      '&Query=' + enc(title || original) +\n      '&title=' + enc(title) +\n      '&title_original=' + enc(original) +\n      '&year=' + enc(String(date).slice(0, 4)) +\n      '&is_serial=' + (movie.name || movie.first_air_date ? 2 : 1);\n  }\n\n  function bytes(size) {\n    if (!size) return '';\n    if (Lampa.Utils && Lampa.Utils.bytesToSize) return Lampa.Utils.bytesToSize(size);\n    var units = ['B', 'KB', 'MB', 'GB', 'TB'];\n    var i = Math.min(units.length - 1, Math.floor(Math.log(size) / Math.log(1024)));\n    return (size / Math.pow(1024, i)).toFixed(2) + ' ' + units[i];\n  }\n\n  function prepare(element) {\n    element.size = bytes(element.Size);\n    if (Lampa.Utils && Lampa.Utils.hash) element.hash = Lampa.Utils.hash(element.Title);\n    if (Lampa.Utils && Lampa.Utils.strToTime && element.PublishDate) element.PublisTime = Lampa.Utils.strToTime(element.PublishDate);\n    return element;\n  }\n\n  function play(element, movie) {\n    if (Lampa.Torrent && typeof Lampa.Torrent.start === 'function') {\n      Lampa.Torrent.start(element, movie);\n    } else {\n      Lampa.Noty.show('Ця версія Lampa не підтримує запуск торентів з плагіна');\n    }\n  }\n\n  var network = null;\n\n  function stopLoading() {\n    if (Lampa.Loading && Lampa.Loading.stop) Lampa.Loading.stop();\n  }\n\n  function open(movie) {\n    if (!serverUrl()) {\n      Lampa.Noty.show('Вкажіть адресу парсера UAKino: Налаштування → UAKino');\n      return;\n    }\n\n    var controller = Lampa.Controller.enabled().name;\n    if (network) network.clear();\n    network = new Lampa.Reguest();\n    network.timeout(120000);\n\n    if (Lampa.Loading && Lampa.Loading.start) {\n      Lampa.Loading.start(function () {\n        network.clear();\n        stopLoading();\n        Lampa.Controller.toggle(controller);\n      });\n    }\n\n    network.silent(searchUrl(movie), function (json) {\n      stopLoading();\n      var results = (json && json.Results) || [];\n      if (!results.length) {\n        Lampa.Noty.show('На UAKino торентів не знайдено');\n        Lampa.Controller.toggle(controller);\n        return;\n      }\n\n      var items = results.map(function (r) {\n        var info = [];\n        if (r.Size) info.push(bytes(r.Size));\n        if (r.Files) info.push(r.Files + ' файл.');\n        info.push('▲ ' + (r.Seeders || 0));\n        info.push('▼ ' + (r.Peers || 0));\n        return { title: r.Title, subtitle: info.join(' • '), torrent: prepare(r) };\n      });\n\n      Lampa.Select.show({\n        title: 'UAKino — торенти',\n        items: items,\n        onSelect: function (item) {\n          Lampa.Controller.toggle(controller);\n          play(item.torrent, movie);\n        },\n        onBack: function () {\n          Lampa.Controller.toggle(controller);\n        }\n      });\n    }, function (a, c) {\n      stopLoading();\n      var err = network.errorDecode ? network.errorDecode(a, c) : 'помилка запиту';\n      if (a && a.responseJSON && a.responseJSON.error) err = a.responseJSON.error;\n      Lampa.Noty.show('UAKino: ' + err);\n      Lampa.Controller.toggle(controller);\n    });\n  }\n\n  function addButton(e) {\n    var render = e.object.activity.render();\n    if (render.find('.view--uakino').length) return;\n\n    var button = $('<div class=\"full-start__button selector view--uakino\">' + ICON + '<span>UAKino</span></div>');\n    button.on('hover:enter', function () {\n      open(e.data.movie);\n    });\n\n    var torrent = render.find('.view--torrent');\n    if (torrent.length) torrent.after(button);\n    else render.find('.full-start-new__buttons, .full-start__buttons').first().append(button);\n\n    // Оновлюємо навігацію, щоб кнопка стала доступною з пульта.\n    if (Lampa.Controller.enabled().name === 'full_start') Lampa.Controller.toggle('full_start');\n  }\n\n  function addSettings() {\n    if (!Lampa.SettingsApi) return;\n    Lampa.SettingsApi.addComponent({ component: 'uakino', name: 'UAKino', icon: ICON });\n    Lampa.SettingsApi.addParam({\n      component: 'uakino',\n      param: { name: 'uakino_server', type: 'input', values: '', default: '', placeholder: BUILT_IN_SERVER || 'http://192.168.1.10:9118' },\n      field: {\n        name: 'Адреса парсера',\n        description: BUILT_IN_SERVER ? 'За замовчуванням: ' + BUILT_IN_SERVER : 'Адреса, де запущено server.js (порт 9118)'\n      }\n    });\n    Lampa.SettingsApi.addParam({\n      component: 'uakino',\n      param: { name: 'uakino_apikey', type: 'input', values: '', default: '', placeholder: '' },\n      field: { name: 'API-ключ', description: 'Лише якщо на парсері задано UAKINO_APIKEY' }\n    });\n  }\n\n  function start() {\n    addSettings();\n    Lampa.Listener.follow('full', function (e) {\n      if (e.type === 'complite') addButton(e);\n    });\n  }\n\n  if (window.appready) start();\n  else {\n    Lampa.Listener.follow('app', function (e) {\n      if (e.type === 'ready') start();\n    });\n  }\n})();\n";
+const __PLUGIN_SOURCE__ = "/*\n * UAKino — плагін для Lampa.\n * Додає на картку фільму/серіалу дві кнопки:\n *   «UAKino»          — онлайн-перегляд з uakino.best (серії, озвучки, якість), як online_mod;\n *   «UAKino торенти»  — торенти з uakino.best, запуск через TorrServer.\n * Дані дає парсер з цього репозиторію (Cloudflare Worker або server.js).\n *\n * Встановлення: Lampa → Налаштування → Розширення → Додати плагін →\n * <адреса парсера>/uakino.js — адреса парсера підставиться сама.\n */\n(function () {\n  'use strict';\n\n  if (window.uakino_torrents_plugin) return;\n  window.uakino_torrents_plugin = true;\n\n  // Сервер замінює цей рядок своєю адресою, коли віддає плагін за /uakino.js\n  var BUILT_IN_SERVER = '__UAKINO_SERVER__';\n  if (BUILT_IN_SERVER.indexOf('__') === 0) BUILT_IN_SERVER = '';\n\n  var ICON = '<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" width=\"24\" height=\"24\"><path fill=\"currentColor\" d=\"M12 2 3 6v6c0 5 3.8 9.7 9 10 5.2-.3 9-5 9-10V6l-9-4Zm0 4.2 2 4.3H10l2-4.3ZM8 12h8l-4 6-4-6Z\"/></svg>';\n  var ICON_PLAY = '<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" width=\"24\" height=\"24\"><path fill=\"currentColor\" d=\"M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20Zm-2 14.5v-9l7 4.5-7 4.5Z\"/></svg>';\n\n  function serverUrl() {\n    var s = Lampa.Storage.get('uakino_server', '') || BUILT_IN_SERVER;\n    s = String(s).trim().replace(/\\/+$/, '');\n    if (s && !/^https?:\\/\\//i.test(s)) s = 'http://' + s;\n    return s;\n  }\n\n  function enc(v) {\n    return encodeURIComponent(v || '');\n  }\n\n  function movieInfo(movie) {\n    var date = movie.release_date || movie.first_air_date || '';\n    return {\n      title: movie.title || movie.name || '',\n      original: movie.original_title || movie.original_name || '',\n      year: String(date).slice(0, 4),\n      serial: !!(movie.name || movie.first_air_date)\n    };\n  }\n\n  function requireServer() {\n    if (serverUrl()) return true;\n    Lampa.Noty.show('Вкажіть адресу парсера UAKino: Налаштування → UAKino');\n    return false;\n  }\n\n  function errorText(network, a, c) {\n    if (a && a.responseJSON && a.responseJSON.error) return a.responseJSON.error;\n    if (a && a.responseText) {\n      try { return JSON.parse(a.responseText).error || 'помилка'; } catch (e) { /* не JSON */ }\n    }\n    return network.errorDecode ? network.errorDecode(a, c) : 'помилка запиту';\n  }\n\n  function bytes(size) {\n    if (!size) return '';\n    if (Lampa.Utils && Lampa.Utils.bytesToSize) return Lampa.Utils.bytesToSize(size);\n    var units = ['B', 'KB', 'MB', 'GB', 'TB'];\n    var i = Math.min(units.length - 1, Math.floor(Math.log(size) / Math.log(1024)));\n    return (size / Math.pow(1024, i)).toFixed(2) + ' ' + units[i];\n  }\n\n  function stopLoading() {\n    if (Lampa.Loading && Lampa.Loading.stop) Lampa.Loading.stop();\n  }\n\n  // ======================= Торенти =======================\n\n  var torrentNetwork = null;\n\n  function torrentUrl(movie) {\n    var m = movieInfo(movie);\n    return serverUrl() + '/api/v2.0/indexers/uakino/results' +\n      '?apikey=' + enc(Lampa.Storage.get('uakino_apikey', '')) +\n      '&Query=' + enc(m.title || m.original) +\n      '&title=' + enc(m.title) +\n      '&title_original=' + enc(m.original) +\n      '&year=' + enc(m.year) +\n      '&is_serial=' + (m.serial ? 2 : 1);\n  }\n\n  function prepareTorrent(element) {\n    element.size = bytes(element.Size);\n    if (Lampa.Utils && Lampa.Utils.hash) element.hash = Lampa.Utils.hash(element.Title);\n    if (Lampa.Utils && Lampa.Utils.strToTime && element.PublishDate) element.PublisTime = Lampa.Utils.strToTime(element.PublishDate);\n    return element;\n  }\n\n  function openTorrents(movie) {\n    if (!requireServer()) return;\n\n    var controller = Lampa.Controller.enabled().name;\n    if (torrentNetwork) torrentNetwork.clear();\n    var network = torrentNetwork = new Lampa.Reguest();\n    network.timeout(120000);\n\n    if (Lampa.Loading && Lampa.Loading.start) {\n      Lampa.Loading.start(function () {\n        network.clear();\n        stopLoading();\n        Lampa.Controller.toggle(controller);\n      });\n    }\n\n    network.silent(torrentUrl(movie), function (json) {\n      stopLoading();\n      var results = (json && json.Results) || [];\n      if (!results.length) {\n        Lampa.Noty.show('На UAKino торентів не знайдено');\n        Lampa.Controller.toggle(controller);\n        return;\n      }\n\n      var items = results.map(function (r) {\n        var info = [];\n        if (r.Size) info.push(bytes(r.Size));\n        if (r.Files) info.push(r.Files + ' файл.');\n        info.push('▲ ' + (r.Seeders || 0));\n        info.push('▼ ' + (r.Peers || 0));\n        return { title: r.Title, subtitle: info.join(' • '), torrent: prepareTorrent(r) };\n      });\n\n      Lampa.Select.show({\n        title: 'UAKino — торенти',\n        items: items,\n        onSelect: function (item) {\n          Lampa.Controller.toggle(controller);\n          if (Lampa.Torrent && typeof Lampa.Torrent.start === 'function') Lampa.Torrent.start(item.torrent, movie);\n          else Lampa.Noty.show('Ця версія Lampa не підтримує запуск торентів з плагіна');\n        },\n        onBack: function () {\n          Lampa.Controller.toggle(controller);\n        }\n      });\n    }, function (a, c) {\n      stopLoading();\n      Lampa.Noty.show('UAKino: ' + errorText(network, a, c));\n      Lampa.Controller.toggle(controller);\n    });\n  }\n\n  // ======================= Онлайн =======================\n\n  function OnlineComponent(object) {\n    var network = new Lampa.Reguest();\n    var scroll = new Lampa.Scroll({ mask: true, over: true });\n    var html = $('<div class=\"uakino-online\"></div>');\n    var movie = object.movie || {};\n    var info = movieInfo(movie);\n    var self = this;\n\n    var pages = [];\n    var pageIndex = 0;\n    var data = null;\n    var groups = [];\n    var groupIndex = 0;\n    var last = null;\n    var storeKey = 'uakino_choice_' + (movie.id || info.original || info.title);\n\n    network.timeout(60000);\n\n    function api(path, params, ok, fail) {\n      network.clear();\n      network.silent(serverUrl() + path + '?' + params, ok, function (a, c) {\n        fail(errorText(network, a, c));\n      });\n    }\n\n    function choice() {\n      var c = Lampa.Storage.get(storeKey, '{}');\n      if (typeof c === 'string') {\n        try { c = JSON.parse(c); } catch (e) { c = {}; }\n      }\n      return c || {};\n    }\n\n    function saveChoice() {\n      Lampa.Storage.set(storeKey, { page: pageIndex, group: groups[groupIndex] || '' });\n    }\n\n    function message(text) {\n      scroll.clear();\n      scroll.append($('<div class=\"uakino-online__empty\"></div>').text(text));\n      self.activity.loader(false);\n      self.activity.toggle();\n    }\n\n    this.create = function () {\n      html.append(scroll.render());\n      this.activity.loader(true);\n      if (!serverUrl()) {\n        message('Вкажіть адресу парсера UAKino: Налаштування → UAKino');\n        return this.render();\n      }\n      var params = 'title=' + enc(info.title) + '&original=' + enc(info.original) + '&year=' + enc(info.year);\n      api('/online/search', params, function (json) {\n        pages = (json && json.pages) || [];\n        if (!pages.length) return message('На UAKino нічого не знайдено');\n        var c = choice();\n        pageIndex = c.page < pages.length ? c.page || 0 : 0;\n        loadPage();\n      }, function (err) {\n        message('UAKino: ' + err);\n      });\n      return this.render();\n    };\n\n    function loadPage() {\n      self.activity.loader(true);\n      api('/online/page', 'url=' + enc(pages[pageIndex].url), function (json) {\n        data = json || { items: [] };\n        groups = [];\n        (data.items || []).forEach(function (item) {\n          if (groups.indexOf(item.group) < 0) groups.push(item.group);\n        });\n        var saved = groups.indexOf(choice().group);\n        groupIndex = saved >= 0 ? saved : 0;\n        build();\n      }, function (err) {\n        message('UAKino: ' + err);\n      });\n    }\n\n    function currentItems() {\n      var group = groups[groupIndex];\n      return (data && data.items || []).filter(function (item) {\n        return item.group === group;\n      });\n    }\n\n    function pageName(p) {\n      return p.season ? 'Сезон ' + p.season : p.title;\n    }\n\n    function filterButton(label, value, onEnter) {\n      var btn = $('<div class=\"uakino-online__filter selector\"><span></span> <b></b></div>');\n      btn.find('span').text(label);\n      btn.find('b').text(value);\n      btn.on('hover:enter', onEnter);\n      btn.on('hover:focus', function (e) {\n        last = e.target;\n        scroll.update($(e.target), true);\n      });\n      return btn;\n    }\n\n    function select(title, list, current, onSelect) {\n      Lampa.Select.show({\n        title: title,\n        items: list.map(function (name, i) {\n          return { title: name, selected: i === current, index: i };\n        }),\n        onSelect: function (a) {\n          onSelect(a.index);\n        },\n        onBack: function () {\n          Lampa.Controller.toggle('content');\n        }\n      });\n    }\n\n    function hashFor(item) {\n      if (!Lampa.Utils || !Lampa.Utils.hash) return '';\n      var base = info.original || info.title;\n      if (item.episode != null && (item.season || data.season || info.serial)) {\n        // Той самий формат хешу, що й у online_mod, — прогрес перегляду спільний.\n        var season = item.season || data.season || 1;\n        return Lampa.Utils.hash([season, season > 10 ? ':' : '', item.episode, base].join(''));\n      }\n      return Lampa.Utils.hash(base);\n    }\n\n    function timeline(item) {\n      try {\n        var hash = hashFor(item);\n        return hash && Lampa.Timeline ? Lampa.Timeline.view(hash) : null;\n      } catch (e) {\n        return null;\n      }\n    }\n\n    function build() {\n      scroll.clear();\n      last = null;\n\n      var filters = $('<div class=\"uakino-online__filters\"></div>');\n      if (pages.length > 1) {\n        filters.append(filterButton('Сторінка:', pageName(pages[pageIndex]), function () {\n          select('UAKino', pages.map(pageName), pageIndex, function (i) {\n            pageIndex = i;\n            saveChoice();\n            loadPage();\n          });\n        }));\n      }\n      if (groups.length > 1) {\n        filters.append(filterButton('Озвучка:', groups[groupIndex], function () {\n          select('Озвучка', groups, groupIndex, function (i) {\n            groupIndex = i;\n            saveChoice();\n            build();\n          });\n        }));\n      }\n      scroll.append(filters);\n\n      var items = currentItems();\n      if (!items.length) {\n        scroll.append($('<div class=\"uakino-online__empty\"></div>').text('На цій сторінці немає відео'));\n      }\n\n      items.forEach(function (item, index) {\n        var el = $('<div class=\"uakino-online__item selector\"><div class=\"uakino-online__title\"></div><div class=\"uakino-online__info\"></div><div class=\"uakino-online__timeline\"></div></div>');\n        el.find('.uakino-online__title').text(item.title || data.title);\n        var meta = [];\n        if (item.season || data.season) meta.push('Сезон ' + (item.season || data.season));\n        if (item.group) meta.push(item.group);\n        el.find('.uakino-online__info').text(meta.join(' • '));\n        var view = timeline(item);\n        if (view && Lampa.Timeline.render) el.find('.uakino-online__timeline').append(Lampa.Timeline.render(view));\n        el.on('hover:enter', function () {\n          play(items, index);\n        });\n        el.on('hover:focus', function (e) {\n          last = e.target;\n          scroll.update($(e.target), true);\n        });\n        scroll.append(el);\n      });\n\n      self.activity.loader(false);\n      self.activity.toggle();\n    }\n\n    function resolve(item, ok, fail) {\n      if (item.stream) return ok(item.stream);\n      var net = new Lampa.Reguest();\n      net.timeout(30000);\n      net.silent(serverUrl() + '/online/stream?url=' + enc(item.url) + '&referer=' + enc(data.url), function (json) {\n        var s = json && json.items && json.items.length ? json.items[0].stream : json;\n        if (!s || !s.url) return fail('посилання на відео не знайдено');\n        item.stream = s;\n        ok(s);\n      }, function (a, c) {\n        fail(errorText(net, a, c));\n      });\n    }\n\n    function playerItem(item, stream) {\n      var title = item.title || data.title;\n      var p = { title: title, url: stream.url };\n      if (stream.quality) p.quality = stream.quality;\n      if (stream.subtitles && stream.subtitles.length) p.subtitles = stream.subtitles;\n      var view = timeline(item);\n      if (view) p.timeline = view;\n      return p;\n    }\n\n    function play(items, index) {\n      var item = items[index];\n      Lampa.Loading && Lampa.Loading.start && Lampa.Loading.start(function () {\n        stopLoading();\n      });\n      resolve(item, function (stream) {\n        stopLoading();\n        var first = playerItem(item, stream);\n        var playlist = items.map(function (it, i) {\n          if (i === index) return first;\n          var cell = { title: it.title || data.title };\n          if (it.stream) return playerItem(it, it.stream);\n          // Посилання на інші серії отримуємо лише коли до них дійде плеєр.\n          cell.url = function (call) {\n            resolve(it, function (s) {\n              var p = playerItem(it, s);\n              cell.url = p.url;\n              cell.quality = p.quality;\n              cell.subtitles = p.subtitles;\n              cell.timeline = p.timeline;\n              call();\n            }, function (err) {\n              cell.url = '';\n              Lampa.Noty.show('UAKino: ' + err);\n              call();\n            });\n          };\n          return cell;\n        });\n        Lampa.Player.play(first);\n        Lampa.Player.playlist(playlist);\n      }, function (err) {\n        stopLoading();\n        Lampa.Noty.show('UAKino: ' + err);\n      });\n    }\n\n    this.start = function () {\n      if (Lampa.Activity.active && Lampa.Activity.active().activity !== this.activity) return;\n      Lampa.Controller.add('content', {\n        toggle: function () {\n          Lampa.Controller.collectionSet(scroll.render());\n          Lampa.Controller.collectionFocus(last || false, scroll.render());\n        },\n        up: function () {\n          if (Navigator.canmove('up')) Navigator.move('up');\n          else Lampa.Controller.toggle('head');\n        },\n        down: function () {\n          Navigator.move('down');\n        },\n        left: function () {\n          if (Navigator.canmove('left')) Navigator.move('left');\n          else Lampa.Controller.toggle('menu');\n        },\n        right: function () {\n          Navigator.move('right');\n        },\n        back: function () {\n          Lampa.Activity.backward();\n        }\n      });\n      Lampa.Controller.toggle('content');\n    };\n\n    this.render = function () {\n      return html;\n    };\n\n    this.pause = function () {};\n    this.stop = function () {};\n\n    this.destroy = function () {\n      network.clear();\n      scroll.destroy();\n      html.remove();\n    };\n  }\n\n  function openOnline(movie) {\n    Lampa.Activity.push({\n      url: '',\n      title: 'UAKino',\n      component: 'uakino_online',\n      movie: movie,\n      page: 1\n    });\n  }\n\n  // ======================= Інтеграція =======================\n\n  var CSS = '<style>' +\n    '.uakino-online{padding:0 1.5em 1.5em}' +\n    '.uakino-online__filters{display:flex;flex-wrap:wrap;margin-bottom:1em}' +\n    '.uakino-online__filter{padding:.6em 1.2em;margin:0 1em 1em 0;border-radius:1em;background:rgba(255,255,255,.1)}' +\n    '.uakino-online__item{padding:1em 1.2em;margin-bottom:.7em;border-radius:1em;background:rgba(0,0,0,.3)}' +\n    '.uakino-online__filter.focus,.uakino-online__item.focus{background:#fff;color:#000}' +\n    '.uakino-online__title{font-size:1.3em}' +\n    '.uakino-online__info{margin-top:.3em;opacity:.6}' +\n    '.uakino-online__empty{padding:2em 0;text-align:center;opacity:.7}' +\n    '</style>';\n\n  function addButtons(e) {\n    var render = e.object.activity.render();\n    if (render.find('.view--uakino').length) return;\n\n    var online = $('<div class=\"full-start__button selector view--uakino view--uakino-online\">' + ICON_PLAY + '<span>UAKino</span></div>');\n    online.on('hover:enter', function () {\n      if (requireServer()) openOnline(e.data.movie);\n    });\n\n    var torrents = $('<div class=\"full-start__button selector view--uakino view--uakino-torrent\">' + ICON + '<span>UAKino торенти</span></div>');\n    torrents.on('hover:enter', function () {\n      openTorrents(e.data.movie);\n    });\n\n    var torrent = render.find('.view--torrent');\n    if (torrent.length) {\n      torrent.before(online);\n      torrent.after(torrents);\n    } else {\n      var box = render.find('.full-start-new__buttons, .full-start__buttons').first();\n      box.append(online);\n      box.append(torrents);\n    }\n\n    // Оновлюємо навігацію, щоб кнопки стали доступними з пульта.\n    if (Lampa.Controller.enabled().name === 'full_start') Lampa.Controller.toggle('full_start');\n  }\n\n  function addSettings() {\n    if (!Lampa.SettingsApi) return;\n    Lampa.SettingsApi.addComponent({ component: 'uakino', name: 'UAKino', icon: ICON });\n    Lampa.SettingsApi.addParam({\n      component: 'uakino',\n      param: { name: 'uakino_server', type: 'input', values: '', default: '', placeholder: BUILT_IN_SERVER || 'https://uakino-lampa.example.workers.dev' },\n      field: {\n        name: 'Адреса парсера',\n        description: BUILT_IN_SERVER ? 'За замовчуванням: ' + BUILT_IN_SERVER : 'Адреса Cloudflare Worker або server.js'\n      }\n    });\n    Lampa.SettingsApi.addParam({\n      component: 'uakino',\n      param: { name: 'uakino_apikey', type: 'input', values: '', default: '', placeholder: '' },\n      field: { name: 'API-ключ', description: 'Лише якщо на парсері задано UAKINO_APIKEY' }\n    });\n  }\n\n  function start() {\n    $('body').append($(CSS));\n    Lampa.Component.add('uakino_online', OnlineComponent);\n    addSettings();\n    Lampa.Listener.follow('full', function (e) {\n      if (e.type === 'complite') addButtons(e);\n    });\n  }\n\n  if (window.appready) start();\n  else {\n    Lampa.Listener.follow('app', function (e) {\n      if (e.type === 'ready') start();\n    });\n  }\n})();\n";
 
 const __modules = {
-  "worker/src.js": [{"../lib/parse":"lib/parse.js","../lib/bencode":"lib/bencode.js","../lib/jackett":"lib/jackett.js"}, function (module, exports, require) {
+  "worker/src.js": [{"../lib/parse":"lib/parse.js","../lib/bencode":"lib/bencode.js","../lib/jackett":"lib/jackett.js","../lib/online":"lib/online.js"}, function (module, exports, require) {
 'use strict';
 
 // Версія парсера для Cloudflare Workers: працює цілодобово без власного комп'ютера.
@@ -13,6 +13,7 @@ const __modules = {
 const parse = require('../lib/parse');
 const { parseTorrent } = require('../lib/bencode');
 const { toJackett } = require('../lib/jackett');
+const { createOnline } = require('../lib/online');
 
 const DEFAULT_HOST = 'https://uakino.best';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36';
@@ -44,9 +45,10 @@ async function request(cfg, url, opts = {}) {
     'User-Agent': cfg.ua,
     Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
     'Accept-Language': 'uk-UA,uk;q=0.9,en;q=0.7',
-    Referer: cfg.host + '/',
+    Referer: opts.referer || cfg.host + '/',
   };
   if (cfg.cookie) headers.Cookie = cfg.cookie;
+  if (opts.xhr) headers['X-Requested-With'] = 'XMLHttpRequest';
   if (opts.body) headers['Content-Type'] = 'application/x-www-form-urlencoded; charset=UTF-8';
   const res = await fetch(url, { method: opts.method || 'GET', headers, body: opts.body || null, redirect: 'follow' });
   if (!res.ok) {
@@ -159,6 +161,16 @@ async function handle(req, env, ctx) {
       return new Response(code, { headers: { 'Content-Type': 'application/javascript; charset=utf-8', 'Cache-Control': 'max-age=300', ...CORS } });
     }
 
+    if (url.pathname.indexOf('/online/') === 0) {
+      const online = createOnline({
+        host: cfg.host,
+        fetchText: async (u, o) => (await request(cfg, u, o)).text(),
+        searchSite: (s) => searchSite(cfg, ctx, s),
+      });
+      const data = await online.route(url.pathname, q);
+      if (data) return json(data, 200, { 'Cache-Control': 'max-age=600' });
+    }
+
     if (/^\/api\/v2\.0\/indexers\/[^/]+\/results\/?$/.test(url.pathname)) {
       if (cfg.apikey && q.get('apikey') !== cfg.apikey) return json({ error: 'bad apikey' }, 401);
       const params = {
@@ -190,7 +202,7 @@ async function handle(req, env, ctx) {
 
     return json({ error: 'not found' }, 404);
   } catch (e) {
-    return json({ error: e.message }, 502);
+    return json({ error: e.message }, e.status || 502);
   }
 }
 
@@ -561,6 +573,277 @@ function toJackett(r, base) {
 }
 
 module.exports = { toJackett };
+
+  }],
+  "lib/online.js": [{"./parse":"lib/parse.js"}, function (module, exports, require) {
+'use strict';
+
+// Онлайн-перегляд з uakino (як online_mod): плейлисти серій/озвучок і прямі посилання
+// на відео з плеєрів ashdi (Playerjs). Код не залежить від Node — працює і в Workers.
+
+const parse = require('./parse');
+
+// Плеєри, які дозволено відкривати (захист від запитів на довільні адреси).
+const PLAYER_HOSTS = /(^|\.)(ashdi\.vip|tortuga\.(wtf|tw)|uakino\.[a-z]+)$/i;
+
+function attr(tag, name) {
+  const m = tag.match(new RegExp('\\s' + name + '\\s*=\\s*("([^"]*)"|\'([^\']*)\'|([^\\s>]+))', 'i'));
+  return m ? parse.decodeEntities(m[2] !== undefined ? m[2] : m[3] !== undefined ? m[3] : m[4]) : null;
+}
+
+function absolute(url, host) {
+  if (!url) return '';
+  url = url.trim();
+  if (url.indexOf('//') === 0) return 'https:' + url;
+  if (/^https?:\/\//i.test(url)) return url;
+  return host.replace(/\/+$/, '') + '/' + url.replace(/^\/+/, '');
+}
+
+function seasonOf(s) {
+  const m = String(s || '').match(/сезон\s*(\d+)|(\d+)\s*сезон|season\s*(\d+)/i);
+  return m ? Number(m[1] || m[2] || m[3]) : null;
+}
+
+function episodeOf(s) {
+  const m = String(s || '').match(/(\d+)\s*(?:сері|серия|епізод|episode)|(?:сері[яї]|серия|епізод|episode)\s*(\d+)|^\s*(\d+)\b/i);
+  return m ? Number(m[1] || m[2] || m[3]) : null;
+}
+
+// Блок плейлиста (серіали) та iframe-плеєри (фільми) на сторінці матеріалу.
+function parsePlayers(html, host) {
+  let playlist = null;
+  const ajax = html.match(/<div\b[^>]*class=["'][^"']*playlists-ajax[^"']*["'][^>]*>/i);
+  if (ajax) {
+    const newsId = attr(ajax[0], 'data-news_id');
+    if (newsId) playlist = { newsId, xfield: attr(ajax[0], 'data-xfname') || 'playlist' };
+  }
+  const iframes = [];
+  const re = /<iframe\b[^>]*>/gi;
+  let m;
+  while ((m = re.exec(html))) {
+    const src = absolute(attr(m[0], 'src') || attr(m[0], 'data-src') || '', host);
+    if (!src || iframes.indexOf(src) >= 0) continue;
+    try {
+      const h = new URL(src).hostname;
+      if (!PLAYER_HOSTS.test(h) && h !== new URL(host).hostname) continue;
+    } catch (e) { continue; }
+    if (/youtube|trailer/i.test(src)) continue;
+    iframes.push(src);
+  }
+  return { playlist, iframes };
+}
+
+// Відповідь /engine/ajax/playlists.php: списки (озвучки/сезони) і серії з data-file.
+function parsePlaylist(html, host) {
+  const labels = {};
+  const episodes = [];
+  const re = /<li\b([^>]*)>([\s\S]*?)<\/li>/gi;
+  let m;
+  while ((m = re.exec(html))) {
+    const open = '<li' + m[1] + '>';
+    const file = attr(open, 'data-file');
+    const id = attr(open, 'data-id');
+    const text = parse.stripTags(m[2]);
+    if (file) episodes.push({ id: id || '', voice: attr(open, 'data-voice') || '', title: text, file: absolute(file, host) });
+    else if (id != null) labels[id] = text;
+  }
+  return episodes.map((ep) => {
+    const parts = ep.id ? ep.id.split('_') : [];
+    const names = [];
+    for (let i = 1; i <= parts.length; i++) {
+      const label = labels[parts.slice(0, i).join('_')];
+      if (label && names.indexOf(label) < 0) names.push(label);
+    }
+    if (ep.voice && names.indexOf(ep.voice) < 0) names.push(ep.voice);
+    return { group: names.join(' / ') || 'UAKino', title: ep.title, file: ep.file };
+  });
+}
+
+function jsString(html, key) {
+  const re = new RegExp('[\\s,{]' + key + '\\s*:\\s*([\'"])((?:\\\\.|(?!\\1)[\\s\\S])*)\\1');
+  const m = html.match(re);
+  if (!m) return null;
+  return m[2].replace(/\\(.)/g, (s, c) => (c === 'n' ? '\n' : c));
+}
+
+// "[720p]url1,[1080p]url2" → { '720p': url1, '1080p': url2 }
+function parseQualities(str) {
+  const out = {};
+  String(str || '').split(/,(?=\s*(?:\[|https?:|\/\/))/).forEach((part) => {
+    const m = part.trim().match(/^\[([^\]]*)\](.+)$/);
+    if (m) {
+      m[2].split(' or ').forEach((u) => { if (!out[m[1]]) out[m[1]] = absolute(u.trim(), 'https://x'); });
+    } else if (part.trim()) {
+      out.auto = absolute(part.trim().split(' or ')[0], 'https://x');
+    }
+  });
+  return out;
+}
+
+function parseSubtitles(str) {
+  if (!str) return [];
+  return String(str).split(/,(?=\s*\[)/).map((part) => {
+    const m = part.trim().match(/^\[([^\]]*)\](.+)$/);
+    return m ? { label: m[1], url: absolute(m[2].trim(), 'https://x') } : { label: 'Субтитри', url: absolute(part.trim(), 'https://x') };
+  }).filter((s) => /^https?:/.test(s.url));
+}
+
+function toStream(file, subtitle) {
+  const q = parseQualities(file);
+  const keys = Object.keys(q);
+  if (!keys.length) return null;
+  const best = keys.slice().sort((a, b) => (parseInt(b, 10) || 0) - (parseInt(a, 10) || 0))[0];
+  return { url: q[best], quality: keys.length > 1 ? q : null, subtitles: parseSubtitles(subtitle) };
+}
+
+function flatten(nodes, path, out) {
+  (nodes || []).forEach((n) => {
+    if (Array.isArray(n.folder)) flatten(n.folder, path.concat(n.title || ''), out);
+    else if (n.file) out.push({ path, title: n.title || '', file: n.file, subtitle: n.subtitle || '' });
+  });
+  return out;
+}
+
+// Сторінка плеєра (ashdi тощо): Playerjs({file: "...m3u8"}) або file: '[{"title":..,"folder":[..]}]'
+function parsePlayerjs(html) {
+  const file = jsString(html, 'file');
+  if (!file) return null;
+  const subtitle = jsString(html, 'subtitle') || '';
+  const trimmed = file.trim();
+  if (trimmed[0] === '[' && trimmed[1] !== ']' && /^\[\s*\{/.test(trimmed)) {
+    let data;
+    try { data = JSON.parse(trimmed); } catch (e) { return null; }
+    return { folders: flatten(data, [], []) };
+  }
+  if (trimmed[0] === '#') return null; // зашифрований плеєр — не підтримується
+  return { file: trimmed, subtitle };
+}
+
+class TinyCache {
+  constructor(ttl) { this.ttl = ttl; this.map = new Map(); }
+  async wrap(key, fn) {
+    const e = this.map.get(key);
+    if (e && Date.now() < e.exp) return e.v;
+    const v = await fn();
+    if (this.map.size > 500) this.map.delete(this.map.keys().next().value);
+    this.map.set(key, { v, exp: Date.now() + this.ttl });
+    return v;
+  }
+}
+
+// fetchText(url, { xhr, referer }) → Promise<string>; searchSite(query) → Promise<[{id,url,title}]>
+function createOnline({ host, fetchText, searchSite }) {
+  const cache = new TinyCache(20 * 60 * 1000);
+  host = host.replace(/\/+$/, '');
+
+  function checkUrl(url, players) {
+    let u;
+    try { u = new URL(url); } catch (e) { throw Object.assign(new Error('bad url'), { status: 400 }); }
+    const own = u.hostname.replace(/^www\./, '') === new URL(host).hostname.replace(/^www\./, '');
+    const ok = own || (players && PLAYER_HOSTS.test(u.hostname));
+    if (!ok || !/^https?:$/.test(u.protocol)) throw Object.assign(new Error('url is not allowed'), { status: 403 });
+    return u.toString();
+  }
+
+  async function findPages({ title = '', original = '', query = '' }) {
+    const titles = [title, original, query].filter(Boolean).filter((v, i, a) => a.indexOf(v) === i).slice(0, 3);
+    const found = new Map();
+    let lastError = null;
+    for (const q of titles) {
+      try {
+        for (const item of await searchSite(q)) {
+          if (!found.has(item.id)) found.set(item.id, { ...item, score: parse.scoreTitle(item, titles), season: seasonOf(item.title) });
+        }
+      } catch (e) { lastError = e; }
+    }
+    if (!found.size && lastError) throw lastError;
+    let list = Array.from(found.values()).filter((p) => p.score >= 40);
+    const best = list.reduce((m, p) => Math.max(m, p.score), 0);
+    // Лишаємо найкращі збіги (усі сезони одного серіалу мають однакову оцінку).
+    list = list.filter((p) => p.score >= best - 20);
+    list.sort((a, b) => b.score - a.score || (a.season || 0) - (b.season || 0));
+    if (list.some((p) => p.season)) list.sort((a, b) => (a.season || 0) - (b.season || 0));
+    return list.map(({ id, url, title: t, poster, season }) => ({ id, url, title: t, poster, season }));
+  }
+
+  async function stream(url, referer) {
+    url = checkUrl(url, true);
+    return cache.wrap('stream:' + url, async () => {
+      const html = await fetchText(url, { referer: referer || host + '/' });
+      const p = parsePlayerjs(html);
+      if (!p) throw Object.assign(new Error('не вдалося знайти відео в плеєрі'), { status: 404 });
+      if (p.folders) {
+        return {
+          items: p.folders.map((f) => ({
+            group: f.path.filter((x) => !seasonOf(x)).join(' / ') || 'UAKino',
+            season: seasonOf(f.path.join(' ')),
+            title: f.title,
+            episode: episodeOf(f.title),
+            stream: toStream(f.file, f.subtitle),
+          })).filter((i) => i.stream),
+        };
+      }
+      const s = toStream(p.file, p.subtitle);
+      if (!s) throw Object.assign(new Error('порожнє посилання на відео'), { status: 404 });
+      return s;
+    });
+  }
+
+  async function loadPage(url) {
+    url = checkUrl(url, false);
+    return cache.wrap('page:' + url, async () => {
+      const html = await fetchText(url, {});
+      const page = parse.parsePage(html, url, host);
+      const season = seasonOf(page.title);
+      const players = parsePlayers(html, host);
+      let items = [];
+
+      if (players.playlist) {
+        try {
+          const ajax = host + '/engine/ajax/playlists.php?news_id=' + encodeURIComponent(players.playlist.newsId) +
+            '&xfield=' + encodeURIComponent(players.playlist.xfield) + '&time=' + Date.now();
+          const text = await fetchText(ajax, { xhr: true, referer: url });
+          let body = text;
+          try {
+            const data = JSON.parse(text);
+            body = data && data.success !== false ? String(data.response || '') : '';
+          } catch (e) { /* відповідь — сирий HTML */ }
+          items = parsePlaylist(body, host)
+            .filter((ep) => !/трейлер|trailer/i.test(ep.group + ' ' + ep.title))
+            .map((ep) => ({ group: ep.group, season, title: ep.title, episode: episodeOf(ep.title), url: ep.file }));
+        } catch (e) {
+          if (!players.iframes.length) throw e;
+        }
+      }
+
+      if (!items.length) {
+        for (const src of players.iframes) {
+          try {
+            const s = await stream(src, url);
+            if (s.items) items = items.concat(s.items.map((i) => ({ ...i, season: i.season || season })));
+            else items.push({ group: 'UAKino', season, title: page.title, episode: null, stream: s });
+          } catch (e) { /* пробуємо наступний плеєр */ }
+        }
+      }
+
+      return { url, title: page.title, original: page.original, year: page.year, poster: page.poster, season, items };
+    });
+  }
+
+  // Спільний обробник для /online/* (Node-сервер і Worker) — повертає об'єкт для JSON.
+  async function route(pathname, params) {
+    if (pathname === '/online/search') {
+      return { pages: await findPages({ title: params.get('title') || '', original: params.get('original') || params.get('title_original') || '', query: params.get('query') || params.get('Query') || '' }) };
+    }
+    if (pathname === '/online/page') return loadPage(params.get('url') || '');
+    if (pathname === '/online/stream') return stream(params.get('url') || '', params.get('referer') ? checkUrl(params.get('referer'), false) : '');
+    return null;
+  }
+
+  return { findPages, loadPage, stream, route };
+}
+
+module.exports = { createOnline, parsePlayers, parsePlaylist, parsePlayerjs, parseQualities, parseSubtitles, toStream, seasonOf, episodeOf };
 
   }],
 };

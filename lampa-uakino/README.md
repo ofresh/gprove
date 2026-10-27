@@ -1,6 +1,10 @@
-# UAKino → Lampa: парсер торентів
+# UAKino → Lampa: онлайн-перегляд і торенти
 
-Парсер торентів з **uakino.best** і плагін для **Lampa**.
+Парсер **uakino.best** і плагін для **Lampa**. На картці фільму/серіалу з'являються дві кнопки:
+
+- **UAKino** — онлайн-перегляд прямо з сайту, як online_mod: вибір сезону (сторінки) й озвучки,
+  список серій, якість (480p/720p/1080p), субтитри, плейлист серій і збереження прогресу перегляду;
+- **UAKino торенти** — торенти uakino.best, запуск через TorrServer.
 
 - `server.js` — парсер з Jackett-сумісним API. Шукає матеріали на uakino, знаходить на сторінках
   посилання `https://uakino.best/torrent/<id>/<назва>.torrent`, завантажує .torrent, рахує infohash
@@ -99,6 +103,9 @@ node server.js export             # data/torrents.json — плоский спи
 | Запит | Опис |
 | --- | --- |
 | `GET /api/v2.0/indexers/all/results?Query=&title=&title_original=&year=` | Jackett JSON (`Results[]`: `Title`, `Size`, `Seeders`, `Peers`, `MagnetUri`, `Link`, `Details`, …) |
+| `GET /online/search?title=&original=` | сторінки uakino, що відповідають фільму (сезони серіалу — окремі сторінки) |
+| `GET /online/page?url=<сторінка uakino>` | серії й озвучки (`items[]`: `group`, `season`, `episode`, `title`, `url` або готовий `stream`) |
+| `GET /online/stream?url=<плеєр ashdi>&referer=<сторінка>` | пряме посилання на відео: `{ url, quality, subtitles }` |
 | `GET /download?url=<посилання на .torrent>` | віддає .torrent з uakino (лише `/torrent/*` цього сайту) |
 | `GET /uakino.js` | плагін Lampa з підставленою адресою сервера |
 | `GET /health` | стан і кількість сторінок в індексі |
@@ -127,6 +134,9 @@ node test/test.js
 Тести піднімають локальну імітацію uakino з фікстурами (`test/fixtures`) і перевіряють розбір
 пошуку й сторінок, bencode/infohash, Jackett API, `/download`, обхід сайту, а також роботу
 плагіна в Chromium (з імітацією API Lampa, якщо встановлено Playwright).
+
+Онлайн-відео uakino показує через плеєр ashdi.vip (Playerjs). Парсер бере з нього посилання
+на m3u8, а відтворює його вже сам плеєр Lampa з вашої мережі.
 
 Розмітку uakino відтворено за відомою структурою DLE-сайту. Перевірити її на живому сайті з
 хмарного середовища не вдалося, бо Cloudflare його блокує. Якщо пошук нічого не знаходить, запустіть

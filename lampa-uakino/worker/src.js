@@ -6,6 +6,7 @@
 const parse = require('../lib/parse');
 const { parseTorrent } = require('../lib/bencode');
 const { toJackett } = require('../lib/jackett');
+const { createOnline } = require('../lib/online');
 
 const DEFAULT_HOST = 'https://uakino.best';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36';
@@ -37,9 +38,10 @@ async function request(cfg, url, opts = {}) {
     'User-Agent': cfg.ua,
     Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
     'Accept-Language': 'uk-UA,uk;q=0.9,en;q=0.7',
-    Referer: cfg.host + '/',
+    Referer: opts.referer || cfg.host + '/',
   };
   if (cfg.cookie) headers.Cookie = cfg.cookie;
+  if (opts.xhr) headers['X-Requested-With'] = 'XMLHttpRequest';
   if (opts.body) headers['Content-Type'] = 'application/x-www-form-urlencoded; charset=UTF-8';
   const res = await fetch(url, { method: opts.method || 'GET', headers, body: opts.body || null, redirect: 'follow' });
   if (!res.ok) {
@@ -152,6 +154,16 @@ async function handle(req, env, ctx) {
       return new Response(code, { headers: { 'Content-Type': 'application/javascript; charset=utf-8', 'Cache-Control': 'max-age=300', ...CORS } });
     }
 
+    if (url.pathname.indexOf('/online/') === 0) {
+      const online = createOnline({
+        host: cfg.host,
+        fetchText: async (u, o) => (await request(cfg, u, o)).text(),
+        searchSite: (s) => searchSite(cfg, ctx, s),
+      });
+      const data = await online.route(url.pathname, q);
+      if (data) return json(data, 200, { 'Cache-Control': 'max-age=600' });
+    }
+
     if (/^\/api\/v2\.0\/indexers\/[^/]+\/results\/?$/.test(url.pathname)) {
       if (cfg.apikey && q.get('apikey') !== cfg.apikey) return json({ error: 'bad apikey' }, 401);
       const params = {
@@ -183,7 +195,7 @@ async function handle(req, env, ctx) {
 
     return json({ error: 'not found' }, 404);
   } catch (e) {
-    return json({ error: e.message }, 502);
+    return json({ error: e.message }, e.status || 502);
   }
 }
 

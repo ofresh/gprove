@@ -12,6 +12,7 @@ const path = require('path');
 const fs = require('fs');
 const { UAKino } = require('./lib/uakino');
 const { toJackett } = require('./lib/jackett');
+const { createOnline } = require('./lib/online');
 
 const env = process.env;
 const config = {
@@ -60,6 +61,11 @@ function publicBase(req) {
 }
 
 function createServer(client) {
+  const online = createOnline({
+    host: client.host,
+    fetchText: (u, o) => client.text(u, o),
+    searchSite: (q) => client.searchSite(q),
+  });
   return http.createServer(async (req, res) => {
     if (req.method === 'OPTIONS') return send(res, 204, '');
     if (req.method !== 'GET') return send(res, 405, { error: 'method not allowed' });
@@ -83,6 +89,12 @@ function createServer(client) {
         const code = fs.readFileSync(path.join(__dirname, 'plugin', 'uakino.js'), 'utf8')
           .replace("'__UAKINO_SERVER__'", JSON.stringify(publicBase(req)));
         return send(res, 200, code, 'application/javascript; charset=utf-8');
+      }
+
+      // Онлайн-перегляд: /online/search, /online/page, /online/stream
+      if (url.pathname.indexOf('/online/') === 0) {
+        const data = await online.route(url.pathname, q);
+        if (data) return send(res, 200, data);
       }
 
       // Jackett API: /api/v2.0/indexers/{all|uakino|status:healthy}/results
@@ -121,7 +133,7 @@ function createServer(client) {
       return send(res, 404, { error: 'not found' });
     } catch (e) {
       log('error ' + req.url + ': ' + e.message);
-      return send(res, 502, { error: e.message });
+      return send(res, e.status || 502, { error: e.message });
     }
   });
 }
