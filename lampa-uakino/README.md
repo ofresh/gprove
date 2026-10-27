@@ -7,12 +7,41 @@
   і віддає magnet, розмір, кількість файлів і сіди/піри (через scrape трекерів).
 - `plugin/uakino.js` — плагін Lampa: кнопка **UAKino** на картці фільму/серіалу зі списком торентів
   цього сайту, запуск через TorrServer.
+- `worker/dist/worker.mjs` — та сама логіка одним файлом для Cloudflare Workers.
 - `node server.js crawl` — обхід **усього сайту** (sitemap або сторінки списку) і збереження всіх
   торентів у локальний індекс `data/index.json`.
 
-Потрібен лише Node.js 18+, сторонніх залежностей немає.
+Сторонніх залежностей немає. Можна розгорнути безкоштовно на Cloudflare Workers або запустити вдома (Node.js 18+).
 
-## Запуск
+## Швидкий старт без комп'ютера — Cloudflare Workers (безкоштовно)
+
+Парсер працює в мережі Cloudflare цілодобово, нічого запускати вдома не потрібно.
+
+1. Зареєструйтесь на <https://dash.cloudflare.com/sign-up> (безкоштовно, без картки).
+2. Зліва **Compute (Workers)** → **Workers & Pages** → **Create** → **Create Worker**
+   (шаблон «Hello World»). Назвіть, наприклад, `uakino-lampa` → **Deploy**.
+3. Натисніть **Edit code**, видаліть увесь код у редакторі й вставте вміст файлу
+   [`worker/dist/worker.mjs`](worker/dist/worker.mjs) (на GitHub: кнопка **Raw** → виділити все → скопіювати).
+   Натисніть **Deploy**.
+4. Відкрийте в браузері `https://uakino-lampa.<ваш-піддомен>.workers.dev/` — має з'явитися JSON
+   зі словом `uakino-torrents`. Перевірка пошуку:
+   `https://uakino-lampa.<піддомен>.workers.dev/api/v2.0/indexers/all/results?Query=Високий%20потенціал`
+5. У Lampa → Налаштування → Розширення → Додати плагін:
+   `https://uakino-lampa.<піддомен>.workers.dev/uakino.js`
+
+Додатково (Worker → Settings → Variables): `UAKINO_HOST` (дзеркало сайту), `UAKINO_APIKEY`,
+`UAKINO_COOKIE`/`UAKINO_UA`.
+
+Обмеження Worker-версії: до 30 торентів на пошук (ліміт безкоштовного плану), сіди/піри не
+рахуються (у Workers немає UDP), обходу всього сайту (`crawl`) немає — для цього є Node-версія нижче.
+Якщо Worker отримує від uakino `403 (Cloudflare заблокував запит)`, сайт відсіює і такі запити —
+тоді лишається Node-версія вдома або на іншому хостингу.
+
+**Автооновлення.** Workflow `.github/workflows/uakino-worker.yml` проганяє тести і, якщо в репозиторії
+є секрети `CLOUDFLARE_API_TOKEN` і `CLOUDFLARE_ACCOUNT_ID`, сам розгортає Worker після змін у `main`.
+Після змін у `lib/` чи `plugin/` перезберіть файл: `node worker/build.js`.
+
+## Запуск на своєму комп'ютері / сервері (Node.js)
 
 ```bash
 cd lampa-uakino

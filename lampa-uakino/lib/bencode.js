@@ -1,15 +1,23 @@
 'use strict';
 
-const crypto = require('crypto');
+// Мінімальний bencode-декодер без залежностей від Node: працює і в Node, і в Cloudflare Workers.
+// Рядки повертаються як Uint8Array, для словника "info" запам'ятовуються межі в байтах,
+// щоб порахувати infohash.
 
-// Мінімальний bencode-декодер. Рядки повертаються як Buffer,
-// для словника "info" запам'ятовуються межі в байтах, щоб порахувати infohash.
+const utf8 = new TextDecoder('utf-8');
+
+function ascii(buf, start, end) {
+  let s = '';
+  for (let i = start; i < end; i++) s += String.fromCharCode(buf[i]);
+  return s;
+}
+
 function decode(buf) {
   let pos = 0;
   let infoRange = null;
 
   function readInt(end) {
-    const n = Number(buf.toString('ascii', pos, end));
+    const n = Number(ascii(buf, pos, end));
     if (!Number.isFinite(n)) throw new Error('bencode: bad integer at ' + pos);
     return n;
   }
@@ -39,7 +47,7 @@ function decode(buf) {
       const dict = {};
       while (buf[pos] !== 0x65) {
         if (pos >= buf.length) throw new Error('bencode: unterminated dict');
-        const key = next(depth + 1).toString('utf8');
+        const key = utf8.decode(next(depth + 1));
         const start = pos;
         dict[key] = next(depth + 1);
         if (depth === 0 && key === 'info') infoRange = [start, pos];
@@ -64,17 +72,22 @@ function decode(buf) {
 }
 
 function str(v) {
-  return Buffer.isBuffer(v) ? v.toString('utf8') : (v == null ? '' : String(v));
+  return v instanceof Uint8Array ? utf8.decode(v) : (v == null ? '' : String(v));
+}
+
+function hex(bytes) {
+  return Array.from(new Uint8Array(bytes), (b) => b.toString(16).padStart(2, '0')).join('');
 }
 
 // Розбирає .torrent і повертає назву, розмір, infohash, трекери та magnet.
-function parseTorrent(buf) {
-  if (!Buffer.isBuffer(buf) || buf[0] !== 0x64) throw new Error('not a torrent file');
+async function parseTorrent(input) {
+  const buf = input instanceof Uint8Array ? input : new Uint8Array(input);
+  if (buf[0] !== 0x64) throw new Error('not a torrent file');
   const { value, infoRange } = decode(buf);
   if (!value.info || !infoRange) throw new Error('torrent has no info dictionary');
 
   const info = value.info;
-  const infoHash = crypto.createHash('sha1').update(buf.subarray(infoRange[0], infoRange[1])).digest('hex');
+  const infoHash = hex(await crypto.subtle.digest('SHA-1', buf.slice(infoRange[0], infoRange[1])));
   const name = str(info['name.utf-8'] || info.name);
 
   let files;
@@ -102,17 +115,4 @@ function parseTorrent(buf) {
   return { name, infoHash, size, files, trackers, magnet, created: value['creation date'] || null };
 }
 
-// Кодувальник потрібен лише для тестів (генерація .torrent-фікстур).
-function encode(v) {
-  if (Buffer.isBuffer(v)) return Buffer.concat([Buffer.from(v.length + ':'), v]);
-  if (typeof v === 'string') return encode(Buffer.from(v, 'utf8'));
-  if (typeof v === 'number') return Buffer.from('i' + Math.trunc(v) + 'e');
-  if (Array.isArray(v)) return Buffer.concat([Buffer.from('l'), ...v.map(encode), Buffer.from('e')]);
-  if (v && typeof v === 'object') {
-    const keys = Object.keys(v).sort();
-    return Buffer.concat([Buffer.from('d'), ...keys.map((k) => Buffer.concat([encode(k), encode(v[k])])), Buffer.from('e')]);
-  }
-  throw new Error('bencode: cannot encode ' + typeof v);
-}
-
-module.exports = { decode, encode, parseTorrent };
+module.exports = { decode, parseTorrent };

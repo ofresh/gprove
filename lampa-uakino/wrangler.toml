@@ -1,0 +1,7 @@
+# Розгортання з командного рядка: npx wrangler deploy (з папки lampa-uakino)
+name = "uakino-lampa"
+main = "worker/dist/worker.mjs"
+compatibility_date = "2025-01-01"
+
+[vars]
+UAKINO_HOST = "https://uakino.best"

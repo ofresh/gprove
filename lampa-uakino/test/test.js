@@ -11,7 +11,17 @@ const path = require('path');
 const http = require('http');
 
 const parse = require('../lib/parse');
-const { encode, parseTorrent } = require('../lib/bencode');
+const { parseTorrent } = require('../lib/bencode');
+
+// bencode-кодувальник для генерації .torrent-фікстур.
+function encode(v) {
+  if (Buffer.isBuffer(v)) return Buffer.concat([Buffer.from(v.length + ':'), v]);
+  if (typeof v === 'string') return encode(Buffer.from(v, 'utf8'));
+  if (typeof v === 'number') return Buffer.from('i' + Math.trunc(v) + 'e');
+  if (Array.isArray(v)) return Buffer.concat([Buffer.from('l'), ...v.map(encode), Buffer.from('e')]);
+  const keys = Object.keys(v).sort();
+  return Buffer.concat([Buffer.from('d'), ...keys.map((k) => Buffer.concat([encode(k), encode(v[k])])), Buffer.from('e')]);
+}
 
 const fixtures = path.join(__dirname, 'fixtures');
 const read = (f) => fs.readFileSync(path.join(fixtures, f), 'utf8');
@@ -123,16 +133,16 @@ test('normalizeTitle', () => {
 
 // ---------------- bencode ----------------
 
-test('parseTorrent: infohash, розмір, трекери, magnet', () => {
+test('parseTorrent: infohash, розмір, трекери, magnet', async () => {
   const t = torrents['703632'];
-  const info = parseTorrent(t.buf);
+  const info = await parseTorrent(t.buf);
   assert.strictEqual(info.infoHash, t.hash);
   assert.strictEqual(info.name, 'Високий потенціал (Сезон 1)');
   assert.strictEqual(info.size, 6000);
   assert.strictEqual(info.files.length, 3);
   assert.deepStrictEqual(info.trackers, ['udp://tracker.example:80/announce', 'http://bt.example/announce']);
   assert.ok(info.magnet.startsWith('magnet:?xt=urn:btih:' + t.hash + '&dn='));
-  assert.throws(() => parseTorrent(Buffer.from('<html>Cloudflare</html>')));
+  await assert.rejects(parseTorrent(Buffer.from('<html>Cloudflare</html>')));
 });
 
 // ---------------- server ----------------
@@ -282,6 +292,45 @@ test('плагін Lampa: кнопка, пошук, вибір торента �
   } finally {
     await browser.close();
     srv.close();
+    up.server.close();
+  }
+});
+
+// ---------------- Cloudflare Worker ----------------
+
+test('worker: зібраний файл актуальний і віддає ті самі результати', async () => {
+  const { execFileSync } = require('child_process');
+  const dist = path.join(__dirname, '..', 'worker', 'dist', 'worker.mjs');
+  const before = fs.existsSync(dist) ? fs.readFileSync(dist, 'utf8') : '';
+  execFileSync(process.execPath, [path.join(__dirname, '..', 'worker', 'build.js')]);
+  assert.strictEqual(fs.readFileSync(dist, 'utf8'), before, 'worker/dist/worker.mjs застарів — запустіть node worker/build.js');
+
+  const worker = (await import(require('url').pathToFileURL(dist).href)).default;
+  const up = await startUpstream();
+  const env = { UAKINO_HOST: up.base };
+  const call = (p) => worker.fetch(new Request('https://uakino.example.workers.dev' + p), env, { waitUntil() {} });
+  try {
+    const res = await call('/api/v2.0/indexers/all/results?Query=' + encodeURIComponent('Високий потенціал') + '&title_original=' + encodeURIComponent('High Potential') + '&year=2024');
+    const body = await res.json();
+    assert.strictEqual(res.status, 200, JSON.stringify(body));
+    assert.strictEqual(res.headers.get('access-control-allow-origin'), '*');
+    const r = body.Results;
+    assert.deepStrictEqual(r.map((x) => x.InfoHash), [torrents['703632'].hash, torrents['703633'].hash, torrents['703634'].hash]);
+    assert.strictEqual(r[0].Size, 6000);
+    assert.ok(r[0].Link.startsWith('https://uakino.example.workers.dev/download?url='));
+
+    const dl = await call(new URL(r[1].Link).pathname + new URL(r[1].Link).search);
+    assert.strictEqual(dl.status, 200);
+    assert.ok(Buffer.from(await dl.arrayBuffer()).equals(torrents['703633'].buf));
+    assert.strictEqual((await call('/download?url=' + encodeURIComponent('https://evil.example/torrent/1/a.torrent'))).status, 403);
+
+    const js = await (await call('/uakino.js')).text();
+    assert.ok(js.indexOf('var BUILT_IN_SERVER = "https://uakino.example.workers.dev"') >= 0);
+
+    assert.deepStrictEqual((await (await call('/api/v2.0/indexers/all/results?Query=zzzz')).json()).Results, []);
+    const keyed = await worker.fetch(new Request('https://w.dev/api/v2.0/indexers/all/results?Query=x'), { ...env, UAKINO_APIKEY: 'k' }, {});
+    assert.strictEqual(keyed.status, 401);
+  } finally {
     up.server.close();
   }
 });

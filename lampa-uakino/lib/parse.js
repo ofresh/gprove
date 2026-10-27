@@ -178,4 +178,26 @@ function normalizeTitle(s) {
     .trim();
 }
 
-module.exports = { decodeEntities, stripTags, absoluteUrl, localize, newsId, parseList, parsePage, parseSitemap, normalizeTitle };
+// Наскільки матеріал відповідає шуканим назвам: 100 — точно, 40+ — релевантно.
+function scoreTitle(item, titles) {
+  const t = normalizeTitle(item.title + ' ' + (item.original || ''));
+  let best = 0;
+  for (const raw of titles) {
+    const q = normalizeTitle(raw);
+    if (!q) continue;
+    let s = 0;
+    const base = normalizeTitle(item.title).replace(/\s*(сезон|season)\s*\d+.*$/, '').trim();
+    if (base === q) s = 100;
+    else if (t.indexOf(q) >= 0) s = 60;
+    else if (q.indexOf(base) >= 0 && base.length > 3) s = 40;
+    else {
+      const words = q.split(' ').filter((w) => w.length > 2);
+      const hit = words.filter((w) => t.indexOf(w) >= 0).length;
+      if (words.length) s = Math.round((hit / words.length) * 30);
+    }
+    best = Math.max(best, s);
+  }
+  return best;
+}
+
+module.exports = { scoreTitle, decodeEntities, stripTags, absoluteUrl, localize, newsId, parseList, parsePage, parseSitemap, normalizeTitle };

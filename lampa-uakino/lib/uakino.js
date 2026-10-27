@@ -123,7 +123,7 @@ class UAKino {
     const stored = this.index && this.index.torrents[url];
     if (stored) return this.files.set(url, stored);
     const { buf } = await this.request(url, { referer: this.host + '/' });
-    const t = parseTorrent(buf);
+    const t = await parseTorrent(buf);
     const meta = { infoHash: t.infoHash, name: t.name, size: t.size, files: t.files.length, trackers: t.trackers, magnet: t.magnet, created: t.created };
     if (this.index) this.index.torrents[url] = meta;
     return this.files.set(url, meta);
@@ -141,24 +141,7 @@ class UAKino {
   }
 
   score(item, titles) {
-    const t = parse.normalizeTitle(item.title + ' ' + (item.original || ''));
-    let best = 0;
-    for (const raw of titles) {
-      const q = parse.normalizeTitle(raw);
-      if (!q) continue;
-      let s = 0;
-      const base = parse.normalizeTitle(item.title).replace(/\s*(сезон|season)\s*\d+.*$/, '').trim();
-      if (base === q) s = 100;
-      else if (t.indexOf(q) >= 0) s = 60;
-      else if (q.indexOf(base) >= 0 && base.length > 3) s = 40;
-      else {
-        const words = q.split(' ').filter((w) => w.length > 2);
-        const hit = words.filter((w) => t.indexOf(w) >= 0).length;
-        if (words.length) s = Math.round((hit / words.length) * 30);
-      }
-      best = Math.max(best, s);
-    }
-    return best;
+    return parse.scoreTitle(item, titles);
   }
 
   searchIndex(titles) {
